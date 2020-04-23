@@ -24,6 +24,9 @@ function activate(context) {
     disposable = vscode.commands.registerCommand('extension.createTerminal', createTerminal)
     context.subscriptions.push(disposable)
 
+    disposable = vscode.languages.registerDocumentSymbolProvider({ pattern: '**/*' }, { provideDocumentSymbols })
+    context.subscriptions.push(disposable)
+
     if (!vscode.workspace.getConfiguration('ctagsx').get('disableDefinitionProvider')) {
         disposable = vscode.languages.registerDefinitionProvider({ pattern: '**/*' }, { provideDefinition })
         context.subscriptions.push(disposable)
@@ -117,6 +120,47 @@ function findCTags(context, tag) {
         .catch(err => {
             console.log(err.stack)
             vscode.window.showErrorMessage(`ctagsx: Search failed: ${err}`)
+        })
+}
+
+function provideDocumentSymbols(document, token) {
+    if (document.isUntitled || document.uri.scheme !== 'file') {
+        console.log('ctagsx: Cannot provide definitions for untitled (unsaved) and/or non-local (non file://) documents')
+        return Promise.reject()
+    }
+
+    const editor = vscode.window.activeTextEditor
+    let searchPath = vscode.workspace.rootPath
+    let filePath = path.relative(searchPath, document.fileName)
+
+    return ctagz.findCTagsForPath(searchPath, filePath)
+        .then(result => {
+            const tags = result.results.map(tag => {
+                if (!path.isAbsolute(tag.file)) {
+                    tag.file = path.join(path.dirname(result.tagsFile), tag.file)
+                }
+                return tag
+            })
+            const results = []
+            return Promise.each(tags, tag => {
+                return getLineNumberPattern(tag, null).then(sel => {
+                    if (sel) {
+                        results.push(new vscode.SymbolInformation(tag.name,
+                                                                  // XXX: fix later
+                                                                  11,
+                                                                  // no container
+                                                                  '',
+                                                                  new vscode.Location(vscode.Uri.file(tag.file), sel.start)))
+                    }
+                })
+
+                return results.push()
+            }).then(() => {
+                return results
+            })
+        })
+        .catch(err => {
+            console.log(err.stack)
         })
 }
 
